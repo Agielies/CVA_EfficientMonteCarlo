@@ -1,0 +1,336 @@
+---
+title: "CVA Monte"
+author: "AM Meyer 18450547"
+date: "13/10/2021"
+output: word_document
+---
+
+```{r}
+library(tidyverse)
+
+library(randtoolbox)
+
+
+ 
+#Creating the Black Scoles Model.
+BlackScholes <- function(S, K, r, T, sig, type){
+  
+  if (T == 0) {
+    value = 0
+    return(value)}
+  
+  if(type=="C"){
+  d1 <- (log(S/K) + (r + sig^2/2)*T) / (sig*sqrt(T))
+  d2 <- d1 - sig*sqrt(T)
+  
+  value <- S*pnorm(d1) - K*exp(-r*T)*pnorm(d2)
+  return(value)}
+  
+  if(type=="P"){
+  d1 <- (log(S/K) + (r + sig^2/2)*T) / (sig*sqrt(T))
+  d2 <- d1 - sig*sqrt(T)
+  
+  value <-  (K*exp(-r*T)*pnorm(-d2) - S*pnorm(-d1)
+             
+             )
+  return(value)}
+}
+
+# Geometric browniam motion simulation function
+
+gbm_vec <- function(nsim = 10, t = 1, mu = 0, sigma = 0.1, S0 = 100, dt = 1/250,anti = FALSE,s =1) {
+  # matrix of random draws - one for each day for each simulation
+   set.seed(s)
+  epsilon <- matrix(rnorm(t*nsim), ncol = nsim, nrow = t)  
+  
+  if (anti == TRUE)
+  {
+     set.seed(s)
+    epsilon[,(nsim/2+1):nsim] <- -epsilon[,1:(nsim/2)]
+  }
+  # get GBM and convert to price paths
+  gbm <- exp((mu - sigma * sigma / 2) * dt + sigma * epsilon * sqrt(dt))
+  gbm <- t((apply(rbind(rep(S0, nsim), gbm), 2, cumprod)))
+  return(gbm)
+}
+
+
+# CVA function for one path with black sholes
+
+CVA <- function(path,points =40)
+{
+grid <- vector(length = points)
+vg <- vector(length = points)
+
+for (i in 1:points)
+{grid[i] <- round(i/points*t) /t
+ vg[i] <- gbm[path,grid[i]*t]
+
+}
+ 
+#default probability calculation
+cdp <- vector(length  = points)
+
+cdp[1]<- exp(-0*CS/10000/LGD) - exp(-grid[1]*CS/10000/LGD)
+for (i in 2:points)
+{
+cdp[i] <- exp(-grid[i-1]*CS/10000/LGD) - exp(-grid[i]*CS/10000/LGD)
+}
+
+#Calculating EE
+EE <- vector(length = points)
+for (i in 1:points) {
+  #EE[i] <- BlackScholes(vg[i], K, IR, Mat-grid[i], sigma, "C")
+  EE[i] <- payoff(vg[i],K)
+}
+
+#Calulating CVA
+CVA <- -sum(cdp*EE)*LGD
+return(CVA)
+}
+
+#payoff function 
+payoff <- function(S0,K)
+      {payoff <- max(S0-K,0)
+return(payoff)}
+
+# Specifying parameters and paths and simulating then
+
+nsim <- 10000# number of simulation path, must be a multiple of 100
+Mat <-	1  #matrurity of option
+t <- 250*Mat # simulating the number of time points required for GBM
+
+S0 <- 100  # spot price
+K <- 100  # strike price
+
+mu <- 0 # drift
+sigma <- 0.25 # volatility
+
+IR <- 0.05 # specifying the interest rate
+
+#Credit
+CS <- 150 #Credit Spread Of Counterparty in basis points
+LGD <- 0.6
+
+#Size of grids
+points <- 100
+
+s <- 7
+
+
+ # simularing path for GBM
+gbm <- gbm_vec(nsim, t, mu, sigma, S0,s=s)
+
+#Calucating CVA for all pahts
+CVAv <- vector(length= nsim)
+for (i in 1:nsim)
+{
+  CVAv[i] <- CVA(path=i,points = points)
+}
+
+#Estimate for CVA
+CVA_Simp<- mean(CVAv)
+
+#Variance for estimate
+CVA_Simp_var <- var(CVAv)
+sum(CVAv == 0)
+
+#Antithetic  paths
+gbm <- gbm_vec(nsim, t, mu, sigma, S0,anti= TRUE,s=s)
+
+CVAv_Anti<- vector(length= nsim/2)
+for (i in 1:(nsim/2))
+{
+  CVAv_Anti[i] <- (CVA(path=i) + CVA(path = i+nsim/2))/2
+}
+
+#Estimate for CVA
+CVA_Anti<- mean(CVAv_Anti)
+
+#Variance for estimate
+CVA_Anti_var <- var(CVAv_Anti)
+
+#Variance Reduction using Anithetic
+(CVA_Simp_var - CVA_Anti_var )/CVA_Simp_var
+
+
+#Stratified Sampling
+
+# Geometric browniam motion simulation function using stratified sampling
+
+#strata <- 4
+
+#gbm_vec_strate <- function(nsim = 10, t = 1, mu = 0, sigma = 0.1, S0 = 100, dt = 1/250,anti = FALSE,s =1,strata) {
+  # matrix of random draws - one for each day for each simulation
+   #set.seed(s)
+  #epsilon <- matrix(nrow = t, ncol = nsim)
+  #for (i in 1:strata)
+  #{
+  #epsilon[,(((nsim/strata)*i -(nsim/strata))+1):((nsim/strata)*i)] <- matrix(qnorm(runif(t*nsim/strata,(i-1)/strata,i/strata)), ncol = nsim/strata, nrow = t) 
+#}
+  # get GBM and convert to price paths
+  #gbm <- exp((mu - sigma * sigma / 2) * dt + sigma * epsilon * sqrt(dt))
+  #gbm <- t((apply(rbind(rep(S0, nsim), gbm), 2, cumprod)))
+  #return(gbm)
+#}
+
+#gbm <-  gbm_vec_strate(nsim, t, mu, sigma, S0,s=s,strata = 4)
+
+gbm <- gbm[order(gbm[,t],decreasing=FALSE),]
+
+strata <- 10
+stratnsim <- 10
+
+CVAv_Strat<- vector(length= nsim)
+
+for (i in 1:nsim)
+{
+  CVAv_Strat[i] <- CVA(path=i)
+}
+
+estimate <- vector(length=nsim/strata/stratnsim)
+for (j in 1:(nsim/strata/stratnsim))
+{
+  a <- 0
+
+for (i in 1:strata)
+{
+ CVAq <- mean(CVAv_Strat[sample(((nsim/strata)*i+1-(nsim/strata)):((nsim/strata)*i), stratnsim, replace = FALSE, prob = NULL)])
+a <- a + CVAq
+}
+ estimate[j] <- a/ (stratnsim)
+}
+
+
+#Calculating mean of Start
+CVA_Strat_est <- mean(estimate)
+
+#Calculating  Var
+CVA_Strat_var <- var(estimate)
+
+#Variance Reduction using Anithetic
+(CVA_Simp_var - CVA_Strat_var )/CVA_Simp_var
+
+
+# Quasi Monte Carlo
+
+
+#sobol sequences
+sobol <- sobol(nsim)
+
+#
+epsi <- qnorm(sobol)
+
+
+#end values of stock price
+endvalues <- S0*exp((mu - sigma * sigma / 2) * t/250 + sigma * epsi* sqrt(t/250))
+endvalues
+points <- 40
+# Constructing brownian bridges to evauluate
+W <- matrix(ncol = points, nrow = nsim)
+W[,1] <- rep(S0,nsim)
+W[,points] <- endvalues
+
+for (j in 1:nsim)
+{
+for (i in 2:(points-1))
+{
+  a <- ((round(t/points)/250)*i - (i-1)*round(t/points)/250)/(round(t/250)-(i-1)*round(t/points)/250)
+  delta <- ((round(t/points)/250)*i - (i-1)*round(t/points)/250)*rnorm(1)*S0
+  W[j,i] <- (1-a)*W[j,i-1] + a*W[j,points] + sqrt(1-a)*delta
+}
+}
+gbm <- as.matrix(W)
+
+CVAv_Quasi <- vector(length= nsim)
+
+for (i in 1:nsim)
+{
+CVAv_Quasi[i] <- CVAQ(path=i) 
+}
+
+CVAQ <- function(path,points =40)
+{
+grid <- vector(length = points)
+vg <- vector(length = points)
+
+for (i in 1:points)
+{grid[i] <- round(i/points*t) /t
+ vg[i] <- gbm[path,i]
+
+}
+ 
+#default probability calculation
+cdp <- vector(length  = points)
+
+cdp[1]<- exp(-0*CS/10000/LGD) - exp(-grid[1]*CS/10000/LGD)
+for (i in 2:points)
+{
+cdp[i] <- exp(-grid[i-1]*CS/10000/LGD) - exp(-grid[i]*CS/10000/LGD)
+}
+
+#Calculating EE
+EE <- vector(length = points)
+for (i in 1:points) {
+  #EE[i] <- BlackScholes(vg[i], K, IR, Mat-grid[i], sigma, "C")
+  EE[i] <- payoff(vg[i],K)
+}
+
+#Calulating CVA
+CVA <- -sum(cdp*EE)*LGD
+return(CVA)
+}
+
+#Estimate for CVA
+CVA_Quasi<- mean(CVAv_Quasi)
+
+#Variance for estimate
+CVA_Quasi_var <- var(CVAv_Quasi)
+
+#Variance Reduction using Anithetic
+(CVA_Simp_var - CVA_Quasi_var )/CVA_Quasi_var
+
+
+# Geometric browniam motion simulation function using stratified sampling
+
+#strata <- 4
+
+#gbm_vec_strate <- function(nsim = 10, t = 1, mu = 0, sigma = 0.1, S0 = 100, dt = 1/250,anti = FALSE,s =1,strata) {
+  # matrix of random draws - one for each day for each simulation
+   #set.seed(s)
+  #epsilon <- matrix(nrow = t, ncol = nsim)
+  #for (i in 1:strata)
+  #{
+  #epsilon[,(((nsim/strata)*i -(nsim/strata))+1):((nsim/strata)*i)] <- matrix(qnorm(runif(t*nsim/strata,(i-1)/strata,i/strata)), ncol = nsim/strata, nrow = t) 
+#}
+  # get GBM and convert to price paths
+  #gbm <- exp((mu - sigma * sigma / 2) * dt + sigma * epsilon * sqrt(dt))
+  #gbm <- t((apply(rbind(rep(S0, nsim), gbm), 2, cumprod)))
+  #return(gbm)
+#}
+
+#gbm <-  gbm_vec_strate(nsim, t, mu, sigma, S0,s=s,strata = 4)
+
+
+
+
+
+# Visulazation of paths
+tgbm <- t(gbm)
+gbm_df <- as.data.frame(tgbm) %>%
+  mutate(ix = 1:nrow(tgbm)) %>%
+  pivot_longer(-ix, names_to = 'sim', values_to = 'price')
+gbm_df %>%
+  ggplot(aes(x=ix, y=price, color=sim)) +
+  geom_line() +
+  theme(legend.position = 'none')
+
+
+#Caculating the system time of calculations
+start <- Sys.time()
+gbm <- gbm_vec(nsim = 1000, t, mu, sigma, S0)
+Sys.time() - start
+
+
+
+``` 
